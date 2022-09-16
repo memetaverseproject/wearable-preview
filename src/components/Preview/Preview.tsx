@@ -1,14 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import classNames from 'classnames'
-import { WearableBodyShape } from '@beland/schemas'
+import { PreviewCamera, PreviewType, PreviewMessageType, sendMessage, PreviewEmote } from '@beland/schemas'
 import { useWindowSize } from '../../hooks/useWindowSize'
-import { useAvatar } from '../../hooks/useAvatar'
-import { MessageType, sendMessage } from '../../lib/message'
-import { AvatarCamera, AvatarEmote, AvatarPreview, AvatarPreviewType } from '../../lib/avatar'
-import { parseZoom } from '../../lib/zoom'
-import { Env } from '../../types/env'
-import './Preview.css'
+import { useConfig } from '../../hooks/useConfig'
+import { useReady } from '../../hooks/useReady'
+import { useController } from '../../hooks/useController'
 import { render } from '../../lib/babylon/render'
+import { handleEmoteEvents } from '../../lib/emote-events'
+import './Preview.css'
 
 const Preview: React.FC = () => {
   const [previewError, setPreviewError] = useState('')
@@ -18,80 +17,47 @@ const Preview: React.FC = () => {
   const [isLoadingModel, setIsLoadingModel] = useState(true)
   const [isLoaded, setIsLoaded] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const params = new URLSearchParams(window.location.search)
-  const contractAddress = params.get('contract')!
-  const tokenId = params.get('token')
-  const itemId = params.get('item')
-  const skin = params.get('skin')
-  const hair = params.get('hair')
-  const eyes = params.get('eyes')
-  const emote = params.get('emote') as AvatarEmote | null
-  const camera = params.get('camera') as AvatarCamera | null
-  const transparentBackground = params.has('transparentBackground')
-  const autoRotateSpeedParam = params.get('autoRotateSpeed') as string | null
-  const autoRotateSpeed = autoRotateSpeedParam ? parseFloat(autoRotateSpeedParam) : null
-  const offsetXParam = params.get('offsetX') as string | null
-  const offsetX = offsetXParam ? parseFloat(offsetXParam) : null
-  const offsetYParam = params.get('offsetY') as string | null
-  const offsetY = offsetYParam ? parseFloat(offsetYParam) : null
-  const offsetZParam = params.get('offsetZ') as string | null
-  const offsetZ = offsetZParam ? parseFloat(offsetZParam) : null
-  const zoom = parseZoom(params.get('zoom'))
-  const bodyShapeParam = params.get('bodyShape') || params.get('shape') // keep supporting deprecated "shape" param to avoid breaking changes
-  const bodyShape = bodyShapeParam === 'female' ? WearableBodyShape.FEMALE : bodyShapeParam === 'male' ? WearableBodyShape.MALE : null
-  const urns = params.getAll('urn')
-  const profile = params.get('profile')
-  const env = Object.values(Env).reduce((selected, value) => (value === params.get('env') ? value : selected), Env.PROD)
-  const [overrides, setOverrides] = useState<Partial<AvatarPreview>>({})
-  const [avatar, isLoadingAvatar, avatarError] = useAvatar(
-    {
-      contractAddress,
-      tokenId,
-      itemId,
-      bodyShape,
-      urns,
-      env,
-      profile,
-      skin,
-      hair,
-      eyes,
-      zoom,
-      emote,
-      camera,
-      autoRotateSpeed,
-      offsetX,
-      offsetY,
-      offsetZ,
-    },
-    overrides
-  )
+  const controller = useController()
+  const [config, isLoadingConfig, configError] = useConfig()
   const [image, setImage] = useState('')
   const [is3D, setIs3D] = useState(true)
   const [isMessageSent, setIsMessageSent] = useState(false)
 
-  const error = previewError || avatarError
-  const isLoading = (isLoadingModel || isLoadingAvatar) && !error
+  const error = previewError || configError
+  const isLoading = (isLoadingModel || isLoadingConfig) && !error
   const showImage = !!image && !is3D && !isLoading
   const showCanvas = is3D && !isLoading
 
   useEffect(() => {
-    if (canvasRef.current && avatar) {
-      // rarity background
-      setStyle({ backgroundImage: transparentBackground ? undefined : avatar.background.gradient, opacity: 1 })
+    if (canvasRef.current && config) {
+      let style: React.CSSProperties = { opacity: 1 } // fade in effect
 
       // set background image
-      if (avatar.background.image) {
-        setImage(avatar.background.image)
+      if (config.background.image) {
+        setImage(config.background.image)
+        style.opacity = 1
+        // if rendering a texture, babylon won't render the background, so we do it by css
+        if (!config.background.transparent && config.type === PreviewType.TEXTURE) {
+          style.backgroundColor = config.background.color
+        }
       }
 
+      setStyle(style)
+
       // load model or image (for texture only wearables)
-      if (avatar.type === AvatarPreviewType.TEXTURE) {
+      if (config.type === PreviewType.TEXTURE) {
         setIs3D(false)
         setIsLoadingModel(false)
         setIsLoaded(true)
       } else {
         // preview models
-        render(canvasRef.current, avatar)
+        render(canvasRef.current, config)
+          .then((newController) => {
+            // set new controller as current one
+            controller.current = newController
+            // handle emote events and forward them as messages
+            handleEmoteEvents(controller.current)
+          })
           .catch((error) => setPreviewError(error.message))
           .finally(() => {
             setIsLoadingModel(false)
@@ -99,36 +65,44 @@ const Preview: React.FC = () => {
           })
       }
     }
-  }, [canvasRef.current, avatar]) // eslint-disable-line
+  }, [canvasRef.current, config]) // eslint-disable-line
 
   // send a mesasge to the parent window when loaded or error occurs
   useEffect(() => {
     if (!isMessageSent) {
       if (isLoaded) {
-        sendMessage(MessageType.LOAD)
+        sendMessage(window.parent, PreviewMessageType.LOAD, null)
         setIsMessageSent(true)
-      } else if (error) {
-        sendMessage(MessageType.ERROR, error)
-        setIsMessageSent(true)
-      }
-    }
-  }, [isLoaded, error, isMessageSent])
-
-  // receive message from parent window to update options
-  useEffect(() => {
-    const previous = window.onmessage
-    window.onmessage = function (event: MessageEvent) {
-      if (event.data && event.data.type === MessageType.UPDATE) {
-        const message = event.data as { type: MessageType.UPDATE; options: Partial<AvatarPreview> }
-        if (message.options && typeof message.options === 'object') {
-          setOverrides(message.options)
+        if (config?.type === PreviewType.AVATAR || config?.emote !== PreviewEmote.IDLE) {
+          controller.current?.emote.play()
         }
+      } else if (error) {
+        sendMessage(window.parent, PreviewMessageType.ERROR, { message: error })
+        setIsMessageSent(true)
       }
     }
-    return () => {
-      window.onmessage = previous
+  }, [isLoaded, error, isMessageSent, controller, config?.type, config?.emote])
+
+  // when the config is being loaded again (because the was an update to some of the options) reset all the other loading flags
+  useEffect(() => {
+    if (isLoadingConfig) {
+      let shouldResetIsLoaded = false
+      if (!isLoadingModel) {
+        setIsLoadingModel(true)
+        shouldResetIsLoaded = true
+      }
+      if (isMessageSent) {
+        setIsMessageSent(false)
+        shouldResetIsLoaded = true
+      }
+      if (shouldResetIsLoaded && isLoaded) {
+        setIsLoaded(false)
+      }
     }
-  }, [])
+  }, [isLoadingConfig, isLoadingModel, isMessageSent, isLoaded])
+
+  // send ready message to parent
+  useReady()
 
   return (
     <div
@@ -136,8 +110,9 @@ const Preview: React.FC = () => {
         'is-dragging': isDragging,
         'is-loading': isLoading,
         'is-loaded': isLoaded,
-        'is-3d': is3D && avatar?.camera === AvatarCamera.INTERACTIVE,
+        'is-3d': is3D && config?.camera === PreviewCamera.INTERACTIVE,
         'has-error': !!error,
+        'no-fade-effect': config && !config.fadeEffect,
       })}
       style={style}
     >

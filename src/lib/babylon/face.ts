@@ -1,12 +1,10 @@
 import { AbstractMesh, Color3, Orientation, PBRMaterial, Scene, StandardMaterial, Texture } from '@babylonjs/core'
-import { WearableBodyShape, WearableCategory } from '@beland/schemas'
-import { AvatarPreview } from '../avatar'
+import { PreviewConfig, BodyShape, WearableCategory, WearableDefinition } from '@beland/schemas'
 import { hexToColor } from '../color'
-import { Wearable } from '../wearable'
 import { Asset, loadMask, loadTexture } from './scene'
 import { isCategory } from './utils'
 
-function getCategoryLoader(scene: Scene, features: Wearable[], bodyShape: WearableBodyShape) {
+function getCategoryLoader(scene: Scene, features: WearableDefinition[], bodyShape: BodyShape) {
   return async (category: WearableCategory) => {
     const feature = features.find(isCategory(category))
     if (feature) {
@@ -18,7 +16,7 @@ function getCategoryLoader(scene: Scene, features: Wearable[], bodyShape: Wearab
   }
 }
 
-export async function getFacialFeatures(scene: Scene, features: Wearable[], bodyShape: WearableBodyShape) {
+export async function getFacialFeatures(scene: Scene, features: WearableDefinition[], bodyShape: BodyShape) {
   const loadCategory = getCategoryLoader(scene, features, bodyShape)
   const [eyes, eyebrows, mouth] = await Promise.all([
     loadCategory(WearableCategory.EYES),
@@ -34,25 +32,31 @@ export async function applyFacialFeatures(
   eyes: [Texture | null, Texture | null],
   eyebrows: [Texture | null, Texture | null],
   mouth: [Texture | null, Texture | null],
-  preview: AvatarPreview
+  config: PreviewConfig
 ) {
   for (const mesh of bodyShape.container.meshes) {
     if (mesh.name.toLowerCase().endsWith('mask_eyes')) {
       const [texture, mask] = eyes
       if (texture) {
-        applyTextureAndMask(scene, 'eyes', mesh, texture, preview.eyes, mask, '#ffffff')
+        applyTextureAndMask(scene, 'eyes', mesh, texture, config.eyes, mask, '#ffffff')
+      } else {
+        mesh.setEnabled(false)
       }
     }
     if (mesh.name.toLowerCase().endsWith('mask_eyebrows')) {
       const [texture, mask] = eyebrows
       if (texture) {
-        applyTextureAndMask(scene, 'eyebrows', mesh, texture, preview.hair, mask, preview.hair)
+        applyTextureAndMask(scene, 'eyebrows', mesh, texture, config.hair, mask, config.hair)
+      } else {
+        mesh.setEnabled(false)
       }
     }
     if (mesh.name.toLowerCase().endsWith('mask_mouth')) {
       const [texture, mask] = mouth
       if (texture) {
-        applyTextureAndMask(scene, 'mouth', mesh, texture, preview.skin, mask, preview.skin)
+        applyTextureAndMask(scene, 'mouth', mesh, texture, config.skin, mask, config.skin)
+      } else {
+        mesh.setEnabled(false)
       }
     }
   }
@@ -70,13 +74,14 @@ function applyTextureAndMask(
   const newMaterial = new StandardMaterial(`${name}_standard_material`, scene)
   newMaterial.alphaMode = PBRMaterial.PBRMATERIAL_ALPHABLEND
   newMaterial.backFaceCulling = true
+  newMaterial.specularColor = Color3.Black()
   texture.hasAlpha = true
   newMaterial.sideOrientation = Orientation.CW
   newMaterial.diffuseTexture = texture
   newMaterial.diffuseColor = mask ? Color3.Black() : hexToColor(maskColor)
   if (mask) {
     newMaterial.emissiveTexture = mask
-    newMaterial.emissiveColor = hexToColor(color)
+    newMaterial.diffuseColor = hexToColor(color)
   }
   mesh.material = newMaterial
 }

@@ -1,15 +1,15 @@
 import { SceneLoader } from '@babylonjs/core'
 import { GLTFFileLoader } from '@babylonjs/loaders'
-import { WearableBodyShape } from '@beland/schemas'
-import { AvatarPreview } from '../avatar'
-import { getRepresentation } from '../representation'
-import { Wearable } from '../wearable'
+import { PreviewConfig, BodyShape, WearableDefinition, EmoteDefinition } from '@beland/schemas'
+import { isEmote } from '../emote'
+import { getEmoteRepresentation, getWearableRepresentation } from '../representation'
+import { isWearable } from '../wearable'
 
-export function createMappings(wearables: Wearable[], bodyShape = WearableBodyShape.MALE) {
+export function createMappings(wearables: WearableDefinition[], emote?: EmoteDefinition, bodyShape = BodyShape.MALE) {
   const mappings: Record<string, string> = {}
   for (const wearable of wearables) {
     try {
-      const representation = getRepresentation(wearable, bodyShape)
+      const representation = getWearableRepresentation(wearable, bodyShape)
       for (const file of representation.contents) {
         mappings[file.key] = file.url
       }
@@ -20,6 +20,12 @@ export function createMappings(wearables: Wearable[], bodyShape = WearableBodySh
       continue
     }
   }
+  if (emote) {
+    const representation = getEmoteRepresentation(emote, bodyShape)
+    for (const file of representation.contents) {
+      mappings[file.key] = file.url
+    }
+  }
   return mappings
 }
 
@@ -27,16 +33,22 @@ export function createMappings(wearables: Wearable[], bodyShape = WearableBodySh
  * Configures the mappings for all the relative paths within a model to the right IPFS in the catalyst
  * @param wearables
  */
-export function setupMappings(preview: AvatarPreview) {
-  const wearables = preview.wearable ? [preview.wearable, ...preview.wearables] : preview.wearables
-  const mappings = createMappings(wearables, preview.bodyShape)
+export function setupMappings(config: PreviewConfig) {
+  const wearables = isWearable(config.item) ? [config.item, ...config.wearables] : config.wearables
+  const emote = isEmote(config.item) ? config.item : undefined
+  const mappings = createMappings(wearables, emote, config.bodyShape)
   SceneLoader.OnPluginActivatedObservable.add((plugin) => {
     if (plugin.name === 'gltf') {
       const gltf = plugin as GLTFFileLoader
       gltf.preprocessUrlAsync = async (url: string) => {
-        const baseUrl = `/content/contents/`
-        const parts = url.split(baseUrl)
-        return parts.length > 0 && !!parts[1] ? mappings[parts[1]] : url
+        const baseUrl = `/`
+        const filename = url.split(baseUrl).pop()
+        if (!filename) {
+          return url
+        }
+        const keys = Object.keys(mappings)
+        const key = keys.find((_key) => _key.endsWith(filename))
+        return mappings[key!] || url
       }
     }
   })

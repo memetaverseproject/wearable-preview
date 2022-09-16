@@ -1,0 +1,5 @@
+{
+  "NFT_SERVER_URL": "https://nft-api.beland.io",
+  "PEER_URL": "https://peer.beland.io",
+  "NETWORK": "matic"
+}

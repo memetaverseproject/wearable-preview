@@ -1,10 +1,9 @@
-import { WearableCategory } from '@beland/schemas'
-import { getRepresentationOrDefault, isTexture } from '../representation'
-import { Wearable } from '../wearable'
+import { WearableCategory, WearableDefinition } from '@beland/schemas'
+import { getWearableRepresentationOrDefault, isTexture } from '../representation'
 import { Asset } from './scene'
 
 export function isCategory(category: WearableCategory) {
-  return (wearable: Wearable) => wearable.data.category === category
+  return (wearable: WearableDefinition) => wearable.data.category === category
 }
 
 export function isHidden(category: WearableCategory) {
@@ -21,11 +20,11 @@ export function isSuccesful(result: void | Asset): result is Asset {
   return !!result
 }
 
-export function isModel(wearable: Wearable): boolean {
-  const representation = getRepresentationOrDefault(wearable)
+export function isModel(wearable: WearableDefinition): boolean {
+  const representation = getWearableRepresentationOrDefault(wearable)
   return !isTexture(representation)
 }
 
-export function isFacialFeature(wearable: Wearable): boolean {
+export function isFacialFeature(wearable: WearableDefinition): boolean {
   return !isModel(wearable)
 }

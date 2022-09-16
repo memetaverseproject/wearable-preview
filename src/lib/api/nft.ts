@@ -1,10 +1,11 @@
-import { Env } from '../../types/env'
+import { Wearable } from '@beland/schemas'
+import { Env } from '@dcl/ui-env'
 import { json } from '../json'
-import { Wearable } from '../wearable'
 
 export const nftApiByEnv: Record<Env, string> = {
-  [Env.DEV]: 'https://nft-api-test.beland.io/v1',
-  [Env.PROD]: 'https://nft-api-test.beland.io/v1',
+  [Env.DEVELOPMENT]: 'https://nft-api-test.beland.io/v1',
+  [Env.PRODUCTION]: 'https://nft-api-test.beland.io/v1',
+  stg: ''
 }
 
 class NFTApi {
@@ -34,9 +35,9 @@ class NFTApi {
       
     } as Wearable
   }
-  async fetchNFT(contractAddress: string, tokenId: string, env: Env) {
+  async fetchNFT(contractAddress: string, tokenId: string, nftApi: string) {
     const { rows } = await json<{ rows: { id: string; collectionItemId: string }[] }>(
-      `${nftApiByEnv[env]}/nfts?id=${contractAddress}-${tokenId}`
+      `${nftApi}/nfts?id=${contractAddress}-${tokenId}`
     )
     if (rows.length === 0) {
       throw new Error(`NFT not found for contractAddress="${contractAddress}" tokenId="${tokenId}"`)

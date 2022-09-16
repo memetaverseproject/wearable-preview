@@ -10,7 +10,6 @@ import {
   GlowLayer,
   HemisphericLight,
   Mesh,
-  PBRMaterial,
   Scene,
   SceneLoader,
   SpotLight,
@@ -19,15 +18,30 @@ import {
   Vector3,
 } from '@babylonjs/core'
 import '@babylonjs/loaders'
-import { WearableBodyShape } from '@beland/schemas'
-import { AvatarCamera, AvatarPreview, AvatarPreviewType } from '../avatar'
-import { getContentUrl, getRepresentation, isTexture } from '../representation'
-import { Wearable } from '../wearable'
+import {
+  BodyShape,
+  ISceneController,
+  PreviewCamera,
+  PreviewConfig,
+  PreviewProjection,
+  PreviewType,
+  WearableDefinition,
+} from '@beland/schemas'
+import { hexToColor } from '../color'
+import { isIOs } from '../env'
+import { getWearableRepresentation } from '../representation'
+import { createSceneController } from '../scene'
 import { startAutoRotateBehavior } from './camera'
+
+// needed for debugging
+const showInspector = process.env.REACT_APP_DEBUG
+if (showInspector) {
+  require('@babylonjs/inspector')
+}
 
 export type Asset = {
   container: AssetContainer
-  wearable: Wearable
+  wearable: WearableDefinition
 }
 
 /**
@@ -65,78 +79,107 @@ function refreshBoundingInfo(parent: Mesh) {
  * @param zoom
  * @returns
  */
-export async function createScene(canvas: HTMLCanvasElement, preview: AvatarPreview) {
+let engine: Engine
+export async function createScene(
+  canvas: HTMLCanvasElement,
+  config: PreviewConfig
+): Promise<[Scene, ISceneController]> {
   // Create engine
-  const engine = new Engine(canvas, true, {
+  if (engine) {
+    engine.dispose()
+  }
+  engine = new Engine(canvas, true, {
     preserveDrawingBuffer: true,
     stencil: true,
+    antialias: true,
   })
 
-  // Load GLB/GLTF
+  // Setup scene
   const root = new Scene(engine)
   root.autoClear = true
-  root.clearColor = new Color4(0, 0, 0, 0)
+  root.clearColor = config.background.transparent
+    ? new Color4(0, 0, 0, 0)
+    : hexToColor(config.background.color).toColor4()
+  root.ambientColor = new Color3(1, 1, 1)
   root.preventDefaultOnPointerDown = false
 
-  // effects
-  var glow = new GlowLayer('glow', root, {
-    mainTextureFixedSize: 1024,
-    blurKernelSize: 64,
-  })
-  glow.intensity = 0.2
-
   // Setup Camera
-  var camera = new ArcRotateCamera('camera', 0, 0, 0, new Vector3(0, 0, 0), root)
-  camera.mode = Camera.PERSPECTIVE_CAMERA
-  switch (preview.camera) {
-    case AvatarCamera.INTERACTIVE: {
-      switch (preview.type) {
-        case AvatarPreviewType.WEARABLE: {
-          startAutoRotateBehavior(camera, preview)
-          camera.position = new Vector3(-2, 2, 2)
-          break
-        }
-        case AvatarPreviewType.AVATAR: {
-          camera.position = new Vector3(0, 1, 3.5)
-          break
-        }
-        default: {
-          console.warn(`Unexpected preview.type="${preview.type}"`)
-          // do nothing
-        }
-      }
-      camera.attachControl(canvas, true)
+  const camera = new ArcRotateCamera('camera', 0, 0, 0, new Vector3(0, 0, 0), root)
+  camera.position = new Vector3(config.cameraX, config.cameraY, config.cameraZ)
+
+  switch (config.projection) {
+    case PreviewProjection.PERSPECTIVE: {
+      camera.mode = Camera.PERSPECTIVE_CAMERA
       break
     }
-    case AvatarCamera.STATIC: {
-      camera.position = new Vector3(0, 1, 3.5)
+    case PreviewProjection.ORTHOGRAPHIC: {
+      camera.mode = Camera.ORTHOGRAPHIC_CAMERA
+      camera.orthoTop = 1
+      camera.orthoBottom = -1
+      camera.orthoLeft = -1
+      camera.orthoRight = 1
       break
     }
   }
-  const offset = new Vector3(preview.offsetX, preview.offsetY, preview.offsetZ)
+
+  if (config.type === PreviewType.WEARABLE) {
+    startAutoRotateBehavior(camera, config)
+  }
+
+  if (config.camera === PreviewCamera.INTERACTIVE) {
+    camera.attachControl(canvas, true)
+  }
+
+  const offset = new Vector3(config.offsetX, config.offsetY, config.offsetZ)
   camera.position.addInPlace(offset)
   camera.setTarget(offset)
-  camera.lowerRadiusLimit = camera.upperRadiusLimit = camera.radius / preview.zoom
+
+  // compute camera radius
+  camera.lowerRadiusLimit = camera.radius / config.zoom
+  camera.upperRadiusLimit = camera.lowerRadiusLimit * config.wheelZoom
+  camera.radius =
+    camera.lowerRadiusLimit + ((camera.upperRadiusLimit - camera.lowerRadiusLimit) * config.wheelStart) / 100
+  camera.wheelPrecision = config.wheelPrecision
 
   // Setup lights
-  var directional = new DirectionalLight('directional', new Vector3(0, 0, 1), root)
-  directional.intensity = 1
-  var top = new HemisphericLight('top', new Vector3(0, -1, 0), root)
-  top.intensity = 1
-  var bottom = new HemisphericLight('bottom', new Vector3(0, 1, 0), root)
-  bottom.intensity = 1
-  var spot = new SpotLight('spot', new Vector3(-2, 2, 2), new Vector3(2, -2, -2), Math.PI / 2, 1000, root)
-  spot.intensity = 1
+  if (config.type === PreviewType.WEARABLE) {
+    const directional = new DirectionalLight('directional', new Vector3(0, 0, 1), root)
+    directional.intensity = 1
+    const spot = new SpotLight('spot', new Vector3(-2, 2, 2), new Vector3(2, -2, -2), Math.PI / 2, 1000, root)
+    spot.intensity = 1
+  }
+  const top = new HemisphericLight('top', new Vector3(0, -1, 0), root)
+  top.intensity = 1.0
+  const bottom = new HemisphericLight('bottom', new Vector3(0, 1, 0), root)
+  bottom.intensity = 1.0
 
-  // render loop
-  engine.runRenderLoop(() => root.render())
+  // Setup effects
+  // Avoid ios since the glow effect breaks on safari: https://github.com/decentraland/wearable-preview/issues/11
+  if (!isIOs()) {
+    const glowLayer = new GlowLayer('glow', root)
+    glowLayer.intensity = 2.0
+  }
 
-  return root
+  // Render loop
+  engine.runRenderLoop(() => {
+    root.render()
+  })
+
+  // Dev tools
+  if (showInspector) {
+    root.debugLayer.show({ showExplorer: true, embedMode: true })
+  }
+
+  return [root, createSceneController(engine, root, camera)]
 }
 
-export async function loadMask(scene: Scene, wearable: Wearable, bodyShape: WearableBodyShape): Promise<Texture | null> {
+export async function loadMask(
+  scene: Scene,
+  wearable: WearableDefinition,
+  bodyShape: BodyShape
+): Promise<Texture | null> {
   const name = wearable.id
-  const representation = getRepresentation(wearable, bodyShape)
+  const representation = getWearableRepresentation(wearable, bodyShape)
   const file = representation.contents.find((file) => file.key.toLowerCase().endsWith('_mask.png'))
   if (file) {
     return new Promise((resolve, reject) => {
@@ -151,9 +194,13 @@ export async function loadMask(scene: Scene, wearable: Wearable, bodyShape: Wear
   return null
 }
 
-export async function loadTexture(scene: Scene, wearable: Wearable, bodyShape: WearableBodyShape): Promise<Texture | null> {
+export async function loadTexture(
+  scene: Scene,
+  wearable: WearableDefinition,
+  bodyShape: BodyShape
+): Promise<Texture | null> {
   const name = wearable.id
-  const representation = getRepresentation(wearable, bodyShape)
+  const representation = getWearableRepresentation(wearable, bodyShape)
   const file = representation.contents.find(
     (file) => file.key.toLowerCase().endsWith('.png') && !file.key.toLowerCase().endsWith('_mask.png')
   )
@@ -171,7 +218,8 @@ export async function loadTexture(scene: Scene, wearable: Wearable, bodyShape: W
 }
 
 export async function loadAssetContainer(scene: Scene, url: string) {
-  const load = async (url: string, extension: string) => SceneLoader.LoadAssetContainerAsync(url, '', scene, null, extension)
+  const load = async (url: string, extension: string) =>
+    SceneLoader.LoadAssetContainerAsync(url, '', scene, null, extension)
   // try with GLB, if it fails try with GLTF
   try {
     return await load(url, '.glb')
@@ -181,65 +229,13 @@ export async function loadAssetContainer(scene: Scene, url: string) {
 }
 
 /**
- * Loads a wearable into the Scene, using a given a body shape, skin and hair color
- * @param scene
- * @param wearable
- * @param bodyShape
- * @param skin
- * @param hair
- */
-
-const hairMaterials = ['hair_mat']
-// there are some representations that use a modified material name like "skin-f" or "skin_f", i added them to the list support those wearables
-const skinMaterials = ['avatarskin_mat', 'skin-f', 'skin_f']
-export async function loadWearable(scene: Scene, wearable: Wearable, bodyShape = WearableBodyShape.MALE, skin?: string, hair?: string) {
-  const representation = getRepresentation(wearable, bodyShape)
-  if (isTexture(representation)) {
-    throw new Error(`The wearable="${wearable.id}" is a texture`)
-  }
-  const url = getContentUrl(representation)
-  const container = await loadAssetContainer(scene, url)
-
-  // Clean up
-  for (let material of container.materials) {
-    if (hairMaterials.some((mat) => material.name.toLowerCase().includes(mat))) {
-      if (hair) {
-        const pbr = material as PBRMaterial
-        pbr.albedoColor = Color3.FromHexString(hair)
-      } else {
-        material.alpha = 0
-        scene.removeMaterial(material)
-      }
-    }
-    if (skinMaterials.some((mat) => material.name.toLowerCase().includes(mat))) {
-      if (skin) {
-        const pbr = material as PBRMaterial
-        pbr.albedoColor = Color3.FromHexString(skin)
-      } else {
-        material.alpha = 0
-        scene.removeMaterial(material)
-      }
-    }
-  }
-
-  // Stop any animations
-  for (const animationGroup of container.animationGroups) {
-    animationGroup.stop()
-    animationGroup.reset()
-    animationGroup.dispose()
-  }
-
-  return { container, wearable }
-}
-
-/**
  * Center and resizes a Scene to fit in the camera view
  * @param scene
  */
 
 export function center(scene: Scene) {
   // Setup parent
-  var parent = new Mesh('parent', scene)
+  const parent = new Mesh('parent', scene)
   for (const mesh of scene.meshes) {
     if (mesh !== parent) {
       mesh.setParent(parent)

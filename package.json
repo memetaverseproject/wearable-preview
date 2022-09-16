@@ -1,22 +1,29 @@
 {
   "name": "@beland/wearable-preview",
-  "version": "1.0.0",
+  "version": "0.0.0-development",
   "private": true,
   "dependencies": {
     "@babylonjs/core": "^4.2.0",
+    "@babylonjs/gui": "^4.2.0",
+    "@babylonjs/inspector": "^4.2.0",
     "@babylonjs/loaders": "^4.2.0",
-    "@beland/schemas": "^0.0.3",
+    "@babylonjs/materials": "^4.2.0",
+    "@beland/schemas": "^0.0.6",
+    "@dcl/ui-env": "^1.2.0",
     "@testing-library/jest-dom": "^5.15.0",
     "@testing-library/react": "^11.2.7",
     "@testing-library/user-event": "^12.8.3",
+    "@types/deep-equal": "^1.0.1",
     "@types/jest": "^26.0.24",
     "@types/node": "^12.20.37",
     "@types/react": "^17.0.35",
     "@types/react-dom": "^17.0.11",
     "classnames": "^2.3.1",
-    "decentraland-ui": "^3.12.1",
+    "decentraland-ui": "^3.49.0",
+    "deep-equal": "^2.0.5",
     "fp-future": "^1.0.1",
     "prettier": "^2.4.1",
+    "raw-loader": "^4.0.2",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
     "react-scripts": "4.0.3",
@@ -25,10 +32,12 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "start:debug": "REACT_APP_DEBUG=1 react-scripts start",
     "build": "CI=false && react-scripts build",
+    "build:static-local": "GEN_STATIC_LOCAL=true npm run build && mv ./build ./static-local",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "postinstall": "node ./scripts/prebuild.js"
+    "prebuild": "node ./scripts/prebuild.js"
   },
   "eslintConfig": {
     "extends": [
@@ -43,15 +52,15 @@
       "not op_mini all"
     ],
     "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
     ]
   },
   "prettier": {
     "semi": false,
     "singleQuote": true,
-    "printWidth": 140
+    "printWidth": 120
   },
   "homepage": ""
 }
