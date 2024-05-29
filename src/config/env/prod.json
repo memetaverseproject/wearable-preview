@@ -1,0 +1,5 @@
+{
+  "NFT_SERVER_URL": "https://nft-api.memetaverse.club",
+  "PEER_URL": "https://testnet-peer.memetaverse.club",
+  "NETWORK": "nebulas"
+}
